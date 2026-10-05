@@ -5,8 +5,8 @@
 :root{--ink:#0e2a3b;--water:#8fd6e4;--foam:#f4fbfd;--buoy:#ff7a3d;--mute:#5b7686}
 *{box-sizing:border-box}body{margin:0;background:var(--ink);color:var(--foam);font:16px/1.4 "Avenir Next","Segoe UI","Noto Sans Thai",sans-serif}
 main{max-width:960px;margin:0 auto;padding:12px}h1{font-size:1.5rem;margin:.3em 0}
-input,button{font:inherit;border-radius:8px;border:2px solid var(--water);padding:8px 12px}
-input{background:#fff;color:var(--ink)}button{background:var(--water);color:var(--ink);font-weight:600;cursor:pointer}
+input,select,button,select{font:inherit;border-radius:8px;border:2px solid var(--water);padding:8px 12px}
+input,select{background:#fff;color:var(--ink)}button{background:var(--water);color:var(--ink);font-weight:600;cursor:pointer}
 button:disabled{opacity:.35;cursor:not-allowed}button.go{background:var(--buoy);border-color:var(--buoy)}
 button:focus-visible,input:focus-visible{outline:3px solid #fff;outline-offset:2px}
 canvas{width:100%;height:auto;background:#12394f;border-radius:12px;display:block}
@@ -31,61 +31,64 @@ canvas{width:100%;height:auto;background:#12394f;border-radius:12px;display:bloc
    <label><input type="checkbox" id="boost"> บูสต์ (+1 ช่อง ใช้ได้ครั้งเดียว)</label>
    <button id="ok" class="go"></button></div>
  </div>
- <div id="start" class="row hide"><button id="st" class="go">เริ่มเกม</button></div>
+ <div id="start" class="row hide"><span id="cfg" class="row"><select id="crs"></select><label><input type="checkbox" id="gp"> Grand Prix (3 สนาม)</label></span><button id="bot">+ บอท</button><button id="st" class="go">เริ่มเกม</button></div>
  <div id="pls"></div><div id="log" class="log"></div>
 </section></main>
 <script src="/socket.io/socket.io.js"></script><script src="/shared.js"></script>
 <script>
-const $=id=>document.getElementById(id),so=io(),NAMES={S:'ตรง',G:'โค้งเบา',T:'โค้งหัก'};
-let S=null,plan=[],key='';
-const arrow=t=>t==0?'↑':t<0?'↰':'↱';
+const $=id=>document.getElementById(id),so=io(),NAMES={S:'ตรง',G:'โค้งเบา',T:'โค้งหัก',D:'ตรงยาว'};
+const pid=localStorage.pid||(localStorage.pid=Math.random().toString(36).slice(2));
+let S=null,plan=[],key='',T=null;
+const arrow=t=>t==0?'↑':t<0?'↰':'↱',sp=q=>G.CARDS[S.hand[q.i]].sp;
+for(const k in G.COURSES)$('crs').add(new Option(G.COURSES[k].name,k));
 function toast(m){$('toast').textContent=m;clearTimeout(toast.t);toast.t=setTimeout(()=>$('toast').textContent='',3500)}
-so.on('err',toast);
-$('mk').onclick=()=>so.emit('join',{name:$('name').value});
-$('jn').onclick=()=>so.emit('join',{name:$('name').value,code:$('code').value});
-$('st').onclick=()=>so.emit('start');
-$('undo').onclick=()=>{plan.pop();render()};
-$('boost').onchange=render;
+const join=code=>{localStorage.nm=$('name').value||localStorage.nm||'Racer';so.emit('join',{name:localStorage.nm,code,pid})};
+$('mk').onclick=()=>join();$('jn').onclick=()=>join($('code').value);
+$('st').onclick=()=>so.emit('start',{course:$('crs').value,gp:$('gp').checked});
+$('bot').onclick=()=>so.emit('addBot');
+$('undo').onclick=()=>{plan.pop();render()};$('boost').onchange=render;
 $('ok').onclick=()=>so.emit('commit',{plays:plan,boost:$('boost').checked});
-so.on('state',s=>{S=s;const k=s.round+':'+s.turn;if(k!==key){key=k;plan=[];$('boost').checked=false}render()});
-const meP=()=>S.players.find(p=>p.id===S.me);
-function sim(){const m=meP();let t={x:m.x,y:m.y,h:m.h};const pts=[];for(const q of plan){const d=G.CARDS[S.hand[q.i]];t=G.step(t,d,q.t);pts.push(t)}return{t,pts}}
+so.on('connect',()=>{if(localStorage.room)so.emit('join',{name:localStorage.nm,code:localStorage.room,pid})});
+so.on('err',m=>{toast(m);if(/ไม่พบห้อง|เข้าห้องไม่ได้/.test(m))localStorage.removeItem('room')});
+so.on('state',s=>{S=s;T=G.track(s.course);localStorage.room=s.code;const k=s.round+':'+s.turn;if(k!==key){key=k;plan=[];$('boost').checked=false}render()});
+const meP=()=>S.players.find(p=>p.id===S.me),obst=()=>S.players.filter(p=>p.id!==S.me&&p.status==='racing');
+function sim(){const m=meP();let t={x:m.x,y:m.y,h:m.h,s:m.s};const pts=[];for(const q of plan){t=G.advance(T,t,G.CARDS[S.hand[q.i]],q.t);pts.push(t)}return{t,pts}}
 function render(){
- if(!S)return;$('lobby').classList.add('hide');$('game').classList.remove('hide');
- const my=S.turn===S.me&&S.phase==='action',m=meP(),cur=S.players.find(p=>p.id===S.turn);
- $('room').textContent='ห้อง '+S.code;
- $('status').textContent=S.phase==='lobby'?'รอเพื่อนเข้าห้อง (ส่งรหัสให้เพื่อน)':S.phase==='over'?'จบเกม':'รอบ '+S.round+' · '+(my?'ถึงตาคุณ':'ตาของ '+(cur?cur.name:''));
- $('start').classList.toggle('hide',!(S.host===S.me&&['lobby','over'].includes(S.phase)&&S.players.length>1));
- $('st').textContent=S.phase==='over'?'เล่นอีกรอบ':'เริ่มเกม';
+ $('lobby').classList.add('hide');$('game').classList.remove('hide');
+ const my=S.turn===S.me&&S.phase==='action',m=meP(),cur=S.players.find(p=>p.id===S.turn),gp=S.gp,cont=S.phase==='over'&&gp.on&&gp.race<3;
+ $('room').textContent='ห้อง '+S.code+' · '+G.COURSES[S.course].name+(gp.on?' · สนาม '+gp.race+'/3':'');
+ $('status').textContent=S.phase==='lobby'?'รอเพื่อน (ส่งรหัสห้องให้เพื่อน) หรือกด + บอท':S.phase==='over'?(cont?'จบสนามนี้':'จบเกม'):'รอบ '+S.round+' · '+(my?'ถึงตาคุณ':'ตาของ '+(cur?cur.name:''));
+ const host=S.host===S.me&&['lobby','over'].includes(S.phase);
+ $('start').classList.toggle('hide',!host);$('cfg').classList.toggle('hide',cont);$('bot').classList.toggle('hide',S.phase!=='lobby');
+ $('st').disabled=S.players.length<2;$('st').textContent=cont?'สนามต่อไป':S.phase==='over'?'เล่นใหม่':'เริ่มเกม';
  $('ctl').classList.toggle('hide',!my);
  if(my){
-  const max=$('boost').checked&&!m.boostUsed?4:3;$('boost').disabled=m.boostUsed;
-  const {t}=sim(),h=$('hand');h.innerHTML='';
+  const max=$('boost').checked&&!m.boostUsed?4:3,used=plan.reduce((a,q)=>a+sp(q),0);$('boost').disabled=m.boostUsed;
+  const {t}=sim(),h=$('hand'),o=obst();h.innerHTML='';
   S.hand.forEach((c,i)=>{if(plan.some(q=>q.i===i))return;const d=G.CARDS[c];
-   d.turns.forEach(tn=>{const b=document.createElement('button');b.textContent=NAMES[c]+' '+arrow(tn)+' '+d.len;
-    b.disabled=plan.length>=max||!G.legal(t,d,tn);b.onclick=()=>{plan.push({i,t:tn});render()};h.appendChild(b)})});
-  $('plan').textContent='แผน: '+(plan.map(q=>NAMES[S.hand[q.i]]+arrow(q.t)).join(' → ')||'(ยังไม่ได้เลือก)')+'  ['+plan.length+'/'+max+']';
+   d.turns.forEach(tn=>{const b=document.createElement('button');b.textContent=NAMES[c]+' '+arrow(tn)+' '+d.len+(d.sp>1?' ('+d.sp+' ช่อง)':'');
+    b.disabled=used+d.sp>max||!G.legal(T,t,d,tn,o);b.onclick=()=>{plan.push({i,t:tn});render()};h.appendChild(b)})});
+  $('plan').textContent='แผน: '+(plan.map(q=>NAMES[S.hand[q.i]]+arrow(q.t)).join(' → ')||'(ยังไม่ได้เลือก)')+'  ['+used+'/'+max+' ช่อง]';
   $('undo').disabled=!plan.length;$('ok').textContent=plan.length?'ยืนยันการเดิน':'อยู่เฉย ๆ';
  }
  const pl=$('pls');pl.innerHTML='';
- const ord=S.phase==='action'?S.order:[];
- [...S.players].sort((a,b)=>(a.rank||99)-(b.rank||99)||ord.indexOf(a.id)-ord.indexOf(b.id)).forEach(p=>{
+ [...S.players].sort((a,b)=>(a.rank||99)-(b.rank||99)||S.order.indexOf(a.id)-S.order.indexOf(b.id)).forEach(p=>{
   const d=document.createElement('div');d.className='pl'+(p.id===S.me?' me':'');
   const st=p.status==='finished'?'อันดับ '+p.rank:p.status==='out'?'ตกรอบ':S.phase==='lobby'?'':'กำลังแข่ง';
-  d.innerHTML='<span class="dot" style="background:'+p.color+'"></span>'+(p.id===S.turn?'▶ ':'')+p.name+(p.weight?' (หนัก '+p.weight+')':'')+' '+st+(p.boostUsed?' · ใช้บูสต์แล้ว':'');
+  d.innerHTML='<span class="dot" style="background:'+p.color+'"></span>'+(p.id===S.turn?'▶ ':'')+(p.bot?'🤖 ':'')+p.name+(p.weight?' (หนัก '+p.weight+')':'')+' '+st+(p.off?' (หลุด)':'')+(p.boostUsed?' · ใช้บูสต์แล้ว':'')+(gp.on?' · '+(gp.pts[p.id]||0)+' แต้ม':'');
   pl.appendChild(d)});
- $('log').textContent=S.log.join(' | ');
- draw(my);
+ $('log').textContent=S.log.join(' | ');draw(my);
 }
+function gate(c,s,col){const p=T.pts.find(q=>q.s>=s);c.strokeStyle=col;c.lineWidth=5;c.beginPath();c.moveTo(p.x-Math.sin(p.h)*G.HW,p.y+Math.cos(p.h)*G.HW);c.lineTo(p.x+Math.sin(p.h)*G.HW,p.y-Math.cos(p.h)*G.HW);c.stroke()}
 function draw(my){
- const c=$('cv').getContext('2d'),{a,R,HW}=G;c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,900,500);c.translate(450,250);
- c.beginPath();c.moveTo(-a,R);c.lineTo(a,R);c.arc(a,0,R,Math.PI/2,-Math.PI/2,true);c.lineTo(-a,-R);c.arc(-a,0,R,-Math.PI/2,Math.PI/2,true);c.closePath();
- c.lineJoin='round';c.strokeStyle='#8fd6e4';c.lineWidth=2*HW;c.stroke();c.strokeStyle='#cdeef5';c.lineWidth=2;c.setLineDash([10,14]);c.stroke();c.setLineDash([]);
- c.strokeStyle='#fff';c.lineWidth=5;c.beginPath();c.moveTo(0,R-HW);c.lineTo(0,R+HW);c.stroke();
- c.fillStyle='#0e2a3b';c.font='bold 14px sans-serif';c.textAlign='center';c.fillText('สตาร์ท/เส้นชัย →',0,R+HW+18);
- S.players.forEach(p=>{if(p.status!=='racing')return;c.strokeStyle=p.color;c.globalAlpha=.55;c.lineWidth=6;c.lineCap='round';c.beginPath();p.trail.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.stroke();c.globalAlpha=1});
- if(my){const {pts}=sim(),m=meP();let t={x:m.x,y:m.y,h:m.h};c.setLineDash([6,6]);c.lineWidth=3;
-  plan.forEach((q,i)=>{const d=G.CARDS[S.hand[q.i]],n=pts[i];c.strokeStyle='#fff';c.beginPath();c.moveTo(t.x,t.y);c.lineTo(n.x,n.y);c.stroke();c.fillStyle='#fff';c.beginPath();c.arc(n.x,n.y,4,0,7);c.fill();t=n});c.setLineDash([])}
+ const c=$('cv').getContext('2d');c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,900,500);c.translate(450,250);
+ const path=()=>{c.beginPath();T.pts.forEach((p,i)=>i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y))};
+ c.lineJoin=c.lineCap='round';path();c.strokeStyle='#8fd6e4';c.lineWidth=2*G.HW;c.stroke();
+ path();c.strokeStyle='#cdeef5';c.lineWidth=2;c.setLineDash([10,14]);c.stroke();c.setLineDash([]);
+ gate(c,T.lead,'#fff');gate(c,T.Lf,'#ff7a3d');
+ S.players.forEach(p=>{if(p.status!=='racing')return;c.strokeStyle=p.color;c.globalAlpha=.55;c.lineWidth=6;c.beginPath();p.trail.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.stroke();c.globalAlpha=1});
+ if(my){const {pts}=sim(),m=meP();let t={x:m.x,y:m.y};c.setLineDash([6,6]);c.lineWidth=3;c.strokeStyle='#fff';c.fillStyle='#fff';
+  pts.forEach(n=>{c.beginPath();c.moveTo(t.x,t.y);c.lineTo(n.x,n.y);c.stroke();c.beginPath();c.arc(n.x,n.y,4,0,7);c.fill();t=n});c.setLineDash([])}
  S.players.forEach(p=>{if(p.status!=='racing')return;c.save();c.translate(p.x,p.y);c.rotate(p.h);c.fillStyle=p.color;c.strokeStyle=p.id===S.me?'#fff':'#0e2a3b';c.lineWidth=3;
   c.beginPath();c.moveTo(14,0);c.lineTo(-9,-9);c.lineTo(-9,9);c.closePath();c.fill();c.stroke();c.restore()});
 }
